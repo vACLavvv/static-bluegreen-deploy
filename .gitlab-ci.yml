@@ -1,0 +1,76 @@
+stages:
+  - deploy
+  - activate
+  - revert
+
+variables:
+  APP_DIR: "/www/static-bluegreen"
+  RELEASES_DIR: "/www/static-bluegreen/releases"
+  CURRENT_LINK: "/www/static-bluegreen/current"
+  RELEASE_PATH: "/www/static-bluegreen/releases/$CI_COMMIT_SHA"
+
+default:
+  image: alpine:latest
+  tags:
+    - deploy_react
+
+deploy_static:
+  stage: deploy
+  script:
+    - echo "Создаём новый релиз $RELEASE_PATH"
+    - mkdir -p "$RELEASES_DIR"
+    - rm -rf "$RELEASE_PATH"
+    - mkdir -p "$RELEASE_PATH"
+
+    - cp -r index.html "$RELEASE_PATH/"
+    - echo "$CI_COMMIT_SHA" > "$RELEASE_PATH/.release"
+
+    - echo "Сохраняем ссылку на предыдущую версию"
+    - cp -Pv "$CURRENT_LINK" "$RELEASE_PATH/prev-version" || true
+
+    - echo "Содержимое нового релиза:"
+    - ls -la "$RELEASE_PATH"
+  only:
+    - master
+    - main
+
+activate_static:
+  stage: activate
+  script:
+    - echo "Активируем новый релиз через symlink"
+    - test -f "$RELEASE_PATH/index.html" || (echo "В релизе нет index.html"; exit 1)
+
+    - ln -fsnv "$RELEASE_PATH" "$CURRENT_LINK"
+
+    - echo "Активная версия:"
+    - readlink -f "$CURRENT_LINK"
+  only:
+    - master
+    - main
+
+rollback_static:
+  stage: revert
+  when: manual
+  script:
+    - echo "Откат на предыдущую версию"
+
+    - echo "Текущая активная версия:"
+    - readlink -f "$CURRENT_LINK"
+
+    - export CURRENT_VERSION=$(readlink -f "$CURRENT_LINK")
+    - test -n "$CURRENT_VERSION" || (echo "Не найдена текущая версия"; exit 1)
+
+    - export PREVIOUS_VERSION=$(readlink -f "$CURRENT_VERSION/prev-version")
+    - test -n "$PREVIOUS_VERSION" || (echo "Не найдена предыдущая версия"; exit 1)
+
+    - test -f "$PREVIOUS_VERSION/.release" || (echo "Предыдущий релиз не является валидным релизом"; exit 1)
+    - test -f "$PREVIOUS_VERSION/index.html" || (echo "В предыдущем релизе нет index.html"; exit 1)
+
+    - echo "Откатываемся на $PREVIOUS_VERSION"
+    - ln -fsnv "$PREVIOUS_VERSION" "$CURRENT_LINK"
+
+    - echo "Теперь активная версия:"
+    - readlink -f "$CURRENT_LINK"
+  only:
+    - master
+    - main
